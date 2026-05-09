@@ -1,10 +1,16 @@
 package com.glassykeyboard;
 
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -84,7 +90,9 @@ public final class GlassyKeyboardView extends LinearLayout {
         this.listener = listener;
         setOrientation(VERTICAL);
         setPadding(dp(8), dp(8), dp(8), dp(32));
-        setBackgroundColor(Color.BLACK);
+        setClipToPadding(false);
+        setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        setBackground(new LiquidPanelDrawable());
         seedLongPressAlternates();
 
         suggestionRow = new LinearLayout(context);
@@ -186,7 +194,8 @@ public final class GlassyKeyboardView extends LinearLayout {
         view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         view.setTextSize(KEY_SPACE.equals(key) ? 15f : isIconKey(key) ? 22f : 18f);
         view.setText(labelFor(key));
-        view.setBackground(glassDrawable(false));
+        view.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        view.setBackground(glassDrawable(false, key));
         view.setIncludeFontPadding(false);
         view.setClickable(true);
         view.setOnTouchListener(new OnTouchListener() {
@@ -213,7 +222,7 @@ public final class GlassyKeyboardView extends LinearLayout {
                 downRawX = event.getRawX();
                 lastSpaceRawX = event.getRawX();
                 slideTrace.setLength(0);
-                view.setBackground(glassDrawable(true));
+                applyPressedVisual(view, key, true);
                 performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (isLetterKey(key)) {
                     appendTraceKey(key);
@@ -232,14 +241,14 @@ public final class GlassyKeyboardView extends LinearLayout {
                         String hitKey = String.valueOf(hit.getTag());
                         if (appendTraceKey(hitKey)) {
                             slideActive = true;
-                            hit.setBackground(glassDrawable(true));
+                            applyPressedVisual(hit, hitKey, true);
                         }
                     }
                 }
                 return true;
             case MotionEvent.ACTION_UP:
                 cancelTimers();
-                view.setBackground(glassDrawable(false));
+                applyPressedVisual(view, key, false);
                 restoreUnpressedKeys();
                 if (slideActive && slideTrace.length() > 1) {
                     listener.onGestureWord(slideTrace.toString());
@@ -251,7 +260,7 @@ public final class GlassyKeyboardView extends LinearLayout {
                 return true;
             case MotionEvent.ACTION_CANCEL:
                 cancelTimers();
-                view.setBackground(glassDrawable(false));
+                applyPressedVisual(view, key, false);
                 restoreUnpressedKeys();
                 return true;
             default:
@@ -357,8 +366,14 @@ public final class GlassyKeyboardView extends LinearLayout {
 
     private void restoreUnpressedKeys() {
         for (TextView key : allKeys) {
-            key.setBackground(glassDrawable(false));
+            key.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
+            key.setBackground(glassDrawable(false, String.valueOf(key.getTag())));
         }
+    }
+
+    private void applyPressedVisual(TextView view, String key, boolean pressed) {
+        view.animate().scaleX(pressed ? 0.94f : 1f).scaleY(pressed ? 0.94f : 1f).setDuration(80).start();
+        view.setBackground(glassDrawable(pressed, key));
     }
 
     private void renderSuggestionRow() {
@@ -423,13 +438,22 @@ public final class GlassyKeyboardView extends LinearLayout {
         chip.setTextColor(enabled ? Color.WHITE : 0x99FFFFFF);
         chip.setTextSize(15f);
         chip.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        chip.setBackground(glassDrawable(false));
+        chip.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        chip.setBackground(glassDrawable(false, "chip-" + text));
         chip.setIncludeFontPadding(false);
         chip.setEnabled(enabled);
         return chip;
     }
 
     private void addChip(TextView chip) {
+        if (suggestionRow.getChildCount() > 0) {
+            View divider = new View(getContext());
+            divider.setBackground(new FrostedDividerDrawable());
+            LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), LayoutParams.MATCH_PARENT);
+            dividerParams.topMargin = dp(10);
+            dividerParams.bottomMargin = dp(10);
+            suggestionRow.addView(divider, dividerParams);
+        }
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f);
         params.leftMargin = dp(4);
         params.rightMargin = dp(4);
@@ -504,16 +528,12 @@ public final class GlassyKeyboardView extends LinearLayout {
         return "\u21b5";
     }
 
-    private GradientDrawable glassDrawable(boolean pressed) {
-        GradientDrawable drawable = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                pressed
-                        ? new int[]{0xAAFFFFFF, 0x553A3A44, 0x22202028}
-                        : new int[]{0x55FFFFFF, 0x221A1A22, 0x0DFFFFFF});
-        drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setCornerRadius(dp(24));
-        drawable.setStroke(dp(1), pressed ? 0xD8FFFFFF : 0x66FFFFFF);
-        return drawable;
+    private Drawable glassDrawable(boolean pressed, String key) {
+        return new LiquidGlassDrawable(pressed, tintSeed(key));
+    }
+
+    private int tintSeed(String key) {
+        return key == null ? 0 : Math.abs(key.hashCode());
     }
 
     private void seedLongPressAlternates() {
@@ -561,6 +581,191 @@ public final class GlassyKeyboardView extends LinearLayout {
                 || KEY_SYMBOLS.equals(key)
                 || KEY_LETTERS.equals(key)
                 || KEY_CLIPBOARD.equals(key);
+    }
+
+    private final class LiquidGlassDrawable extends Drawable {
+        private final boolean pressed;
+        private final int seed;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+        private final RectF highlightRect = new RectF();
+
+        LiquidGlassDrawable(boolean pressed, int seed) {
+            this.pressed = pressed;
+            this.seed = seed;
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            Rect bounds = getBounds();
+            float shadow = dp(pressed ? 3 : 5);
+            float inset = dp(pressed ? 2 : 1);
+            float radius = Math.min(bounds.height() * 0.44f, dp(24));
+            rect.set(bounds.left + inset, bounds.top + dp(2), bounds.right - inset, bounds.bottom - shadow);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(null);
+            paint.setShadowLayer(dp(pressed ? 5 : 9), 0, dp(pressed ? 1 : 3), pressed ? 0x55000000 : 0x88000000);
+            paint.setColor(0x1AFFFFFF);
+            canvas.drawRoundRect(rect, radius, radius, paint);
+            paint.clearShadowLayer();
+
+            int warmTint = warmRefractionColor();
+            int top = pressed ? 0x45FFFFFF : 0x38FFFFFF;
+            int middle = pressed ? 0x36FFFFFF : 0x2BFFFFFF;
+            int bottom = pressed ? 0x22FFFFFF : 0x18FFFFFF;
+            paint.setShader(new LinearGradient(
+                    0,
+                    rect.top,
+                    0,
+                    rect.bottom,
+                    new int[]{top, blendAlpha(warmTint, pressed ? 0x34 : 0x26), middle, bottom},
+                    new float[]{0f, 0.28f, 0.62f, 1f},
+                    Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(rect, radius, radius, paint);
+            paint.setShader(null);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1));
+            paint.setColor(pressed ? 0xE6FFFFFF : 0x88FFFFFF);
+            canvas.drawRoundRect(rect, radius, radius, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            highlightRect.set(
+                    rect.left + dp(8),
+                    rect.top + dp(3),
+                    rect.right - dp(8),
+                    rect.top + dp(pressed ? 9 : 7));
+            paint.setShader(new LinearGradient(
+                    highlightRect.left,
+                    highlightRect.top,
+                    highlightRect.right,
+                    highlightRect.bottom,
+                    new int[]{0x00FFFFFF, pressed ? 0xF2FFFFFF : 0xB8FFFFFF, 0x00FFFFFF},
+                    new float[]{0f, 0.5f, 1f},
+                    Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(highlightRect, dp(8), dp(8), paint);
+            paint.setShader(null);
+
+            // Inner bottom shade makes each key read as a curved slab instead of a flat tile.
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(2));
+            paint.setColor(pressed ? 0x30302A20 : 0x46302A20);
+            RectF bottomShade = new RectF(rect);
+            bottomShade.inset(dp(2), dp(2));
+            canvas.drawArc(bottomShade, 35, 110, false, paint);
+        }
+
+        private int warmRefractionColor() {
+            int variant = seed % 4;
+            if (variant == 0) {
+                return Color.rgb(255, 231, 202);
+            } else if (variant == 1) {
+                return Color.rgb(236, 246, 255);
+            } else if (variant == 2) {
+                return Color.rgb(255, 220, 232);
+            }
+            return Color.rgb(230, 255, 239);
+        }
+
+        private int blendAlpha(int color, int alpha) {
+            return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            paint.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter colorFilter) {
+            paint.setColorFilter(colorFilter);
+        }
+
+        @Override
+        public int getOpacity() {
+            return PixelFormat.TRANSLUCENT;
+        }
+    }
+
+    private final class LiquidPanelDrawable extends Drawable {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+
+        @Override
+        public void draw(Canvas canvas) {
+            Rect bounds = getBounds();
+            canvas.drawColor(Color.BLACK);
+            rect.set(bounds.left + dp(3), bounds.top + dp(3), bounds.right - dp(3), bounds.bottom - dp(6));
+            float radius = dp(30);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(null);
+            paint.setShadowLayer(dp(16), 0, -dp(2), 0x66000000);
+            paint.setColor(0x0FFFFFFF);
+            canvas.drawRoundRect(rect, radius, radius, paint);
+            paint.clearShadowLayer();
+
+            paint.setShader(new LinearGradient(
+                    0,
+                    rect.top,
+                    0,
+                    rect.bottom,
+                    new int[]{0x14FFFFFF, 0x0AFFFFFF, 0x05000000},
+                    null,
+                    Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(rect, radius, radius, paint);
+            paint.setShader(null);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            paint.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter colorFilter) {
+            paint.setColorFilter(colorFilter);
+        }
+
+        @Override
+        public int getOpacity() {
+            return PixelFormat.TRANSLUCENT;
+        }
+    }
+
+    private final class FrostedDividerDrawable extends Drawable {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        @Override
+        public void draw(Canvas canvas) {
+            Rect bounds = getBounds();
+            paint.setShader(new LinearGradient(
+                    0,
+                    bounds.top,
+                    0,
+                    bounds.bottom,
+                    new int[]{0x00FFFFFF, 0x70FFFFFF, 0x00FFFFFF},
+                    null,
+                    Shader.TileMode.CLAMP));
+            canvas.drawRect(bounds, paint);
+            paint.setShader(null);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            paint.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter colorFilter) {
+            paint.setColorFilter(colorFilter);
+        }
+
+        @Override
+        public int getOpacity() {
+            return PixelFormat.TRANSLUCENT;
+        }
     }
 
     private int dp(int value) {
