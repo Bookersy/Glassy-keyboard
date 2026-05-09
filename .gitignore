@@ -3,4 +3,5 @@ build/
 local.properties
 **/build/
 *.apk
+!dist/*.apk
 *.aab
