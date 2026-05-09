@@ -1,0 +1,9 @@
+<resources>
+    <color name="oled_black">#000000</color>
+    <color name="glass_panel">#B012141A</color>
+    <color name="glass_key">#66FFFFFF</color>
+    <color name="glass_key_pressed">#99FFFFFF</color>
+    <color name="glass_stroke">#55FFFFFF</color>
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#CCFFFFFF</color>
+</resources>
